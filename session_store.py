@@ -292,6 +292,7 @@ class SessionStore:
         self._save_lock = asyncio.Lock()  # 保护 _save() 的全局锁
         self._data: dict = self._load()
         self._dedup_all_histories()
+        self._ensure_builtin_workspaces()
 
     def _load(self) -> dict:
         if os.path.exists(SESSIONS_FILE):
@@ -350,8 +351,47 @@ class SessionStore:
         if changed:
             self._save()
 
+    # ── 内置 workspace 预注册 ──────────────────────────────────
+    # 在 .env 的 BUILTIN_WORKSPACES 中配置，格式：name:path,name:path
+    # 例如：mai:/home/user/maimai/mai,maigo:/home/user/maimai/maigo
+
+    def _ensure_builtin_workspaces(self):
+        """启动时为每个用户补齐内置 workspace（不覆盖已有的）"""
+        builtin_raw = os.getenv("BUILTIN_WORKSPACES", "")
+        if not builtin_raw:
+            return
+        builtins = {}
+        for item in builtin_raw.split(","):
+            item = item.strip()
+            if ":" not in item:
+                continue
+            name, path = item.split(":", 1)
+            name, path = name.strip(), os.path.expanduser(path.strip())
+            if name and path:
+                builtins[name] = path
+
+        if not builtins:
+            return
+
+        changed = False
+        for user in self._data.values():
+            ws = user.setdefault("workspaces", {})
+            for name, path in builtins.items():
+                if name not in ws:
+                    ws[name] = path
+                    changed = True
+        if changed:
+            self._save()
+
+        # 保存内置列表供首次用户时也写入
+        self._builtin_workspaces = builtins
+
     def _user(self, user_id: str) -> dict:
-        return self._data.setdefault(user_id, {})
+        user = self._data.setdefault(user_id, {})
+        # 首次创建用户时注入内置 workspace
+        if not user.get("workspaces") and hasattr(self, "_builtin_workspaces"):
+            user["workspaces"] = dict(self._builtin_workspaces)
+        return user
 
     def _default_current(self) -> dict:
         return {

@@ -9,7 +9,7 @@ import os
 import subprocess as sp
 from typing import Callable, Optional
 
-from bot_config import PERMISSION_MODE, CLAUDE_CLI
+from bot_config import PERMISSION_MODE, CLAUDE_CLI, APPEND_SYSTEM_PROMPT, DISALLOWED_TOOLS, ADD_DIRS
 
 IDLE_TIMEOUT = 300  # 5 分钟无输出且无子进程，视为挂死
 _CHECK_INTERVAL = 30  # 静默时每 30 秒检查一次子进程
@@ -76,6 +76,18 @@ async def run_claude(
             cmd += ["--resume", active_session_id]
         if model:
             cmd += ["--model", model]
+        if APPEND_SYSTEM_PROMPT:
+            cmd += ["--append-system-prompt", APPEND_SYSTEM_PROMPT]
+        if DISALLOWED_TOOLS:
+            for tool in DISALLOWED_TOOLS.split(","):
+                tool = tool.strip()
+                if tool:
+                    cmd += ["--disallowedTools", tool]
+        if ADD_DIRS:
+            for d in ADD_DIRS.split(","):
+                d = d.strip()
+                if d:
+                    cmd += ["--add-dir", os.path.expanduser(d)]
 
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)

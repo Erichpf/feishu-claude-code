@@ -8,6 +8,7 @@
 import asyncio
 import json
 import re
+import subprocess as sp
 import sys
 import os
 import threading
@@ -277,7 +278,7 @@ async def _run_and_display(
     plan_exited = False  # Claude 调了 ExitPlanMode
     last_push_time = 0.0
     push_failures = 0
-    _PUSH_INTERVAL = 0.4
+    _PUSH_INTERVAL = 0.2
     _MAX_STREAM_DISPLAY = 2500
 
     async def push(content: str):
@@ -409,10 +410,7 @@ async def _run_and_display(
 
     if card_patched:
         try:
-            if is_group and notify_msg_id:
-                await feishu.reply_text(notify_msg_id, "✅")
-            else:
-                await feishu.send_text_to_user(user_id, "✅")
+            await feishu.add_reaction(notify_msg_id)
         except Exception:
             pass
 
@@ -926,6 +924,42 @@ class _CardCallbackHandler(BaseHTTPRequestHandler):
         pass  # 静默 HTTP 日志
 
 
+# ── 后台定时 git pull 更新代码仓 ────────────────────────────
+
+def _bg_git_pull_thread():
+    """后台线程: 定时对目标代码仓执行 git pull --ff-only，保持代码最新"""
+    interval = config.GIT_PULL_INTERVAL
+    dirs = [d.strip() for d in config.GIT_PULL_DIRS.split(",") if d.strip()]
+    if not dirs:
+        return
+    time.sleep(120)  # 启动后等 2 分钟再开始，避免和启动流程冲突
+    while True:
+        for repo_dir in dirs:
+            expanded = os.path.expanduser(repo_dir)
+            if not os.path.isdir(os.path.join(expanded, ".git")):
+                print(f"[git] {expanded} 不是 git 仓库，跳过", flush=True)
+                continue
+            try:
+                result = sp.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=expanded,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode == 0:
+                    output = result.stdout.strip()
+                    if output and output != "Already up to date.":
+                        print(f"[git] {expanded}: {output}", flush=True)
+                else:
+                    print(f"[git] {expanded} pull 失败: {result.stderr.strip()}", flush=True)
+            except sp.TimeoutExpired:
+                print(f"[git] {expanded} pull 超时", flush=True)
+            except Exception as e:
+                print(f"[git] {expanded} 异常: {e}", flush=True)
+        time.sleep(interval)
+
+
 # ── 后台定时摘要生成 ─────────────────────────────────────────
 
 def _bg_summary_thread():
@@ -1030,6 +1064,8 @@ def main():
     # 启动后台线程
     threading.Thread(target=_watchdog, daemon=True).start()
     threading.Thread(target=_bg_summary_thread, daemon=True).start()
+    if config.GIT_PULL_DIRS:
+        threading.Thread(target=_bg_git_pull_thread, daemon=True).start()
 
     print("✅ 连接飞书 WebSocket 长连接（自动重连）...")
     ws_client.start()  # 阻塞，内部运行 asyncio loop

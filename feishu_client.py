@@ -12,6 +12,8 @@ from typing import Optional
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1.model import (
+    CreateMessageReactionRequestBody,
+    CreateMessageReactionRequest,
     CreateMessageRequest,
     CreateMessageRequestBody,
     PatchMessageRequest,
@@ -294,6 +296,25 @@ class FeishuClient:
                 raise RuntimeError(f"patch 卡片失败: {resp.code} {resp.msg}")
 
         await self._retry_with_backoff(_update, max_retries=3)
+
+    async def add_reaction(self, message_id: str, emoji_type: str = "DONE"):
+        """给消息添加表情回复（用于完成提示，代替单独发 ✅ 文本）"""
+        try:
+            req = (
+                CreateMessageReactionRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    CreateMessageReactionRequestBody.builder()
+                    .reaction_type({"emoji_type": emoji_type})
+                    .build()
+                )
+                .build()
+            )
+            resp = await self.client.im.v1.message_reaction.acreate(req)
+            if not resp.success():
+                print(f"[warn] add_reaction 失败: {resp.code} {resp.msg}", flush=True)
+        except Exception as e:
+            print(f"[warn] add_reaction 异常: {e}", flush=True)
 
     async def reply_text(self, message_id: str, text: str) -> str:
         """回复纯文本消息（触发通知）"""

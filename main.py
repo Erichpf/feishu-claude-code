@@ -32,24 +32,18 @@ from commands import parse_command, handle_command
 from claude_runner import run_claude
 from run_control import ActiveRun, ActiveRunRegistry, stop_run
 
-# ── 看门狗：定时重启防止 WebSocket 假死 ──────────────────────
+# ── 看门狗：打印运行状态 ────────────────────────────────────
 
-MAX_UPTIME = 4 * 3600   # 最长运行 4 小时后主动重启
 _start_time = time.time()
 _last_event = time.time()
 
 
 def _watchdog():
-    """后台线程，定期检查进程健康。异常时退出让 launchctl 拉起。"""
+    """后台线程，定期打印运行状态。WebSocket 断连由 SDK 自动重连。"""
     while True:
-        time.sleep(300)  # 每 5 分钟检查
+        time.sleep(300)  # 每 5 分钟
         uptime = time.time() - _start_time
         idle = time.time() - _last_event
-
-        if uptime > MAX_UPTIME:
-            print(f"[watchdog] 运行 {uptime/3600:.1f}h，定时重启刷新连接", flush=True)
-            os._exit(0)
-
         print(f"[watchdog] uptime={uptime/3600:.1f}h idle={idle/60:.0f}min", flush=True)
 
 

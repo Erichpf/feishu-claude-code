@@ -11,6 +11,7 @@ import re
 import subprocess as sp
 import sys
 import os
+from datetime import datetime
 import threading
 import time
 import traceback
@@ -45,6 +46,42 @@ def _watchdog():
         uptime = time.time() - _start_time
         idle = time.time() - _last_event
         print(f"[watchdog] uptime={uptime/3600:.1f}h idle={idle/60:.0f}min", flush=True)
+
+
+# ── Q&A 日志记录 ────────────────────────────────────────────
+
+_QA_LOG_DIR = os.path.join(os.path.expanduser("~/.feishu-claude"), "qa_logs")
+
+
+def _log_qa(*, user_id: str, chat_id: str, is_group: bool,
+            msg_id: str, card_msg_id: str,
+            question: str, answer: str,
+            model: str, session_id: str, duration: float):
+    """将一次 Q&A 记录写入 JSONL 文件（7 天一个文件）"""
+    try:
+        os.makedirs(_QA_LOG_DIR, exist_ok=True)
+        now = datetime.now()
+        # 按 ISO 周编号分文件，每 7 天一个
+        file_name = f"qa-{now.strftime('%G-W%V')}.jsonl"
+        file_path = os.path.join(_QA_LOG_DIR, file_name)
+
+        record = {
+            "time": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "is_group": is_group,
+            "msg_id": msg_id,
+            "card_msg_id": card_msg_id,
+            "question": question[:500],
+            "answer": answer[:2000],
+            "model": model,
+            "session_id": session_id,
+            "duration": round(duration, 1),
+        }
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        print(f"[warn] Q&A 日志写入失败: {e}", flush=True)
 
 
 # ── 全局单例 ──────────────────────────────────────────────────
@@ -264,6 +301,7 @@ async def _run_and_display(
     text: str, card_msg_id: str, session, notify_msg_id: str,
 ):
     """调用 Claude 并流式展示结果，检测选项时附加按钮。消息处理和按钮回复共用此函数。"""
+    start_time = time.time()
     active_run = _active_runs.start_run(user_id, card_msg_id)
 
     accumulated = ""
@@ -410,6 +448,15 @@ async def _run_and_display(
 
     if new_session_id:
         await store.on_claude_response(user_id, chat_id, new_session_id, text)
+
+    # 记录 Q&A 日志
+    _log_qa(
+        user_id=user_id, chat_id=chat_id, is_group=is_group,
+        msg_id=notify_msg_id, card_msg_id=card_msg_id,
+        question=text, answer=final,
+        model=session.model, session_id=new_session_id or session.session_id,
+        duration=time.time() - start_time,
+    )
 
     # ExitPlanMode: Claude 批准方案后要切到执行模式
     if plan_exited and session.permission_mode == "plan":

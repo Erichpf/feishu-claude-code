@@ -40,11 +40,27 @@ _last_event = time.time()
 
 
 def _watchdog():
-    """后台线程，定期打印运行状态。WebSocket 断连由 SDK 自动重连。"""
+    """后台线程，定期打印运行状态。检测事件循环是否卡死。"""
+    _last_loop_tick = time.time()
+    # 每分钟向 _bot_loop 提交一个轻量任务，用来检测事件循环是否响应
+    async def _heartbeat():
+        nonlocal _last_loop_tick
+        _last_loop_tick = time.time()
     while True:
         time.sleep(300)  # 每 5 分钟
         uptime = time.time() - _start_time
         idle = time.time() - _last_event
+        # 提交心跳任务
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_heartbeat(), _bot_loop)
+            fut.result(timeout=10)
+        except Exception:
+            loop_stall = time.time() - _last_loop_tick
+            print(f"[watchdog] ⚠️ _bot_loop 无响应 ({loop_stall:.0f}s)，可能卡死！", flush=True)
+        else:
+            loop_stall = time.time() - _last_loop_tick
+            if loop_stall > 30:
+                print(f"[watchdog] ⚠️ _bot_loop 响应慢 ({loop_stall:.0f}s)，可能即将卡死", flush=True)
         print(f"[watchdog] uptime={uptime/3600:.1f}h idle={idle/60:.0f}min", flush=True)
 
 
